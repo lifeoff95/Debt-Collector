@@ -76,7 +76,8 @@ function calcInterest(principal, rate, loanType, startDate, endDate) {
 
   switch (loanType) {
     case 'Daily':
-      return principal * r * days;
+      // Interest rate applied once for the total duration
+      return principal * r;
     case 'Weekly':
       return principal * r * (days / 7);
     case 'Monthly':
@@ -702,7 +703,7 @@ function updateDebtCalc() {
   const { interest, total } = calcTotal(amount, rate, loanType, startDate, dueDate);
 
   let rateLabel = '';
-  if (loanType === 'Daily') rateLabel = `${rate}% per day`;
+  if (loanType === 'Daily') rateLabel = `${rate}% for duration`;
   else if (loanType === 'Weekly') rateLabel = `${rate}% per week`;
   else if (loanType === 'Monthly') rateLabel = `${rate}% per month`;
   else if (loanType === 'One-time') rateLabel = `${rate}% flat`;
@@ -818,7 +819,7 @@ async function renderDebtDetail(id) {
   const duration = debt.start_date && debt.due_date ? calcDuration(debt.start_date, debt.due_date) : '—';
 
   let rateLabel = `${debt.interest_rate || 0}%`;
-  if (debt.loan_type === 'Daily') rateLabel += ' / day';
+  if (debt.loan_type === 'Daily') rateLabel += ' for duration';
   else if (debt.loan_type === 'Weekly') rateLabel += ' / week';
   else if (debt.loan_type === 'Monthly') rateLabel += ' / month';
   else if (debt.loan_type === 'One-time') rateLabel += ' flat';
@@ -997,9 +998,10 @@ async function showInstalmentModal(debtId) {
       <div class="form-group">
         <label>Frequency</label>
         <select id="instFreq">
-          <option value="monthly">Monthly</option>
+          <option value="daily">Daily</option>
           <option value="weekly">Weekly</option>
           <option value="biweekly">Bi-weekly</option>
+          <option value="monthly">Monthly</option>
         </select>
       </div>
     </div>
@@ -1027,7 +1029,8 @@ async function generateInstalments(debtId, startNum, batch) {
 
   for (let i = 0; i < count; i++) {
     const dueDate = new Date(startDate);
-    if (freq === 'monthly') dueDate.setMonth(dueDate.getMonth() + i);
+    if (freq === 'daily') dueDate.setDate(dueDate.getDate() + i);
+    else if (freq === 'monthly') dueDate.setMonth(dueDate.getMonth() + i);
     else if (freq === 'weekly') dueDate.setDate(dueDate.getDate() + i * 7);
     else if (freq === 'biweekly') dueDate.setDate(dueDate.getDate() + i * 14);
 
