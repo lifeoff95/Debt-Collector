@@ -1,4 +1,4 @@
-const CACHE_NAME = 'debt-collector-v1';
+const CACHE_NAME = 'debt-collector-v2';
 const ASSETS = [
   '/',
   '/index.html',

@@ -46,6 +46,53 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// ── Interest & Date Calculations ──
+function calcDaysBetween(startDate, endDate) {
+  if (!startDate || !endDate) return 0;
+  const s = new Date(startDate);
+  const e = new Date(endDate);
+  return Math.max(0, Math.ceil((e - s) / (1000 * 60 * 60 * 24)));
+}
+
+function calcDuration(startDate, endDate) {
+  const days = calcDaysBetween(startDate, endDate);
+  if (days === 0) return '0 days';
+  const years = Math.floor(days / 365);
+  const months = Math.floor((days % 365) / 30);
+  const remDays = days - (years * 365) - (months * 30);
+  const parts = [];
+  if (years) parts.push(years + (years === 1 ? ' year' : ' years'));
+  if (months) parts.push(months + (months === 1 ? ' month' : ' months'));
+  if (remDays) parts.push(remDays + (remDays === 1 ? ' day' : ' days'));
+  return parts.join(', ') + ` (${days} days)`;
+}
+
+function calcInterest(principal, rate, loanType, startDate, endDate) {
+  if (!rate || !principal) return 0;
+  const days = calcDaysBetween(startDate, endDate);
+  if (days === 0) return 0;
+
+  const r = rate / 100;
+
+  switch (loanType) {
+    case 'Daily':
+      return principal * r * days;
+    case 'Weekly':
+      return principal * r * (days / 7);
+    case 'Monthly':
+      return principal * r * (days / 30);
+    case 'One-time':
+      return principal * r;
+    default:
+      return principal * r * (days / 30);
+  }
+}
+
+function calcTotal(principal, rate, loanType, startDate, endDate) {
+  const interest = calcInterest(principal, rate, loanType, startDate, endDate);
+  return { principal, interest, total: principal + interest };
+}
+
 // ── Navigation ──
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -589,9 +636,10 @@ async function showDebtModal(preselectedDebtorId, editId) {
     <div class="form-row">
       <div class="form-group">
         <label>Loan Type</label>
-        <select id="debtLoanType">
-          <option value="Monthly">Monthly</option>
+        <select id="debtLoanType" onchange="updateDebtCalc()">
+          <option value="Daily">Daily</option>
           <option value="Weekly">Weekly</option>
+          <option value="Monthly">Monthly</option>
           <option value="One-time">One-time</option>
           <option value="Custom">Custom</option>
         </select>
@@ -604,38 +652,93 @@ async function showDebtModal(preselectedDebtorId, editId) {
         </select>
       </div>
     </div>
+    <div id="debtCalcPreview" class="card" style="background:var(--bg);margin-bottom:16px;"></div>
     <button class="btn btn-primary btn-block mt-8" onclick="saveDebt(${editId || 'null'})">${isEdit ? 'Update' : 'Add'} Debt</button>`;
 
   showModal(title, body);
+
+  // Attach live-calc listeners
+  ['debtAmount', 'debtInterest', 'debtStart', 'debtDue'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateDebtCalc);
+  });
+  document.getElementById('debtLoanType').addEventListener('change', updateDebtCalc);
 
   if (isEdit) {
     const d = await db.getDebt(editId);
     if (d) {
       document.getElementById('debtDebtor').value = d.debtor_id;
       document.getElementById('debtDescription').value = d.description;
-      document.getElementById('debtAmount').value = d.amount;
+      document.getElementById('debtAmount').value = d.principal || d.amount;
       document.getElementById('debtInterest').value = d.interest_rate || 0;
       document.getElementById('debtStart').value = d.start_date || '';
       document.getElementById('debtDue').value = d.due_date || '';
-      document.getElementById('debtLoanType').value = d.loan_type || 'Monthly';
+      document.getElementById('debtLoanType').value = d.loan_type || 'Daily';
       document.getElementById('debtStatus').value = d.status;
+      updateDebtCalc();
     }
   }
+
+  if (!isEdit) updateDebtCalc();
+}
+
+function updateDebtCalc() {
+  const amount = parseFloat(document.getElementById('debtAmount').value) || 0;
+  const rate = parseFloat(document.getElementById('debtInterest').value) || 0;
+  const startDate = document.getElementById('debtStart').value;
+  const dueDate = document.getElementById('debtDue').value;
+  const loanType = document.getElementById('debtLoanType').value;
+
+  const el = document.getElementById('debtCalcPreview');
+  if (!el) return;
+
+  if (!amount) {
+    el.innerHTML = '<p style="color:var(--text2);font-size:.85rem;text-align:center;">Enter amount to see calculation</p>';
+    return;
+  }
+
+  const days = calcDaysBetween(startDate, dueDate);
+  const duration = startDate && dueDate ? calcDuration(startDate, dueDate) : '—';
+  const { interest, total } = calcTotal(amount, rate, loanType, startDate, dueDate);
+
+  let rateLabel = '';
+  if (loanType === 'Daily') rateLabel = `${rate}% per day`;
+  else if (loanType === 'Weekly') rateLabel = `${rate}% per week`;
+  else if (loanType === 'Monthly') rateLabel = `${rate}% per month`;
+  else if (loanType === 'One-time') rateLabel = `${rate}% flat`;
+  else rateLabel = `${rate}%`;
+
+  el.innerHTML = `
+    <div style="font-size:.8rem;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;">Calculation Preview</div>
+    <div class="detail-row"><span class="label">Duration</span><span>${duration}</span></div>
+    <div class="detail-row"><span class="label">Principal</span><span>${fmt(amount)}</span></div>
+    <div class="detail-row"><span class="label">Interest (${rateLabel})</span><span style="color:var(--orange)">${fmt(interest)}</span></div>
+    <div style="border-top:1px solid rgba(255,255,255,.1);margin-top:6px;padding-top:8px;">
+      <div class="detail-row"><span class="label" style="font-weight:700;">Total to Collect</span><span style="font-weight:800;font-size:1.1rem;color:var(--green)">${fmt(total)}</span></div>
+    </div>`;
 }
 
 async function saveDebt(editId) {
   const desc = document.getElementById('debtDescription').value.trim();
-  const amount = parseFloat(document.getElementById('debtAmount').value);
-  if (!desc || !amount) { toast('Description and amount required', 'error'); return; }
+  const principal = parseFloat(document.getElementById('debtAmount').value);
+  if (!desc || !principal) { toast('Description and amount required', 'error'); return; }
+
+  const rate = parseFloat(document.getElementById('debtInterest').value) || 0;
+  const startDate = document.getElementById('debtStart').value;
+  const dueDate = document.getElementById('debtDue').value;
+  const loanType = document.getElementById('debtLoanType').value;
+  const { interest, total } = calcTotal(principal, rate, loanType, startDate, dueDate);
 
   const data = {
     debtor_id: parseInt(document.getElementById('debtDebtor').value),
     description: desc,
-    amount,
-    interest_rate: parseFloat(document.getElementById('debtInterest').value) || 0,
-    start_date: document.getElementById('debtStart').value,
-    due_date: document.getElementById('debtDue').value,
-    loan_type: document.getElementById('debtLoanType').value,
+    principal,
+    amount: total,
+    interest_amount: interest,
+    interest_rate: rate,
+    start_date: startDate,
+    due_date: dueDate,
+    loan_type: loanType,
     status: document.getElementById('debtStatus').value
   };
 
@@ -696,7 +799,7 @@ async function renderDebtDetail(id) {
         <div style="background:var(--green);height:100%;width:${pct}%;border-radius:10px;transition:width .3s;"></div>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:10px;">
-        <div><span style="color:var(--text2);font-size:.75rem;">Lent</span><br><strong>${fmt(debt.amount)}</strong></div>
+        <div><span style="color:var(--text2);font-size:.75rem;">Total Due</span><br><strong>${fmt(debt.amount)}</strong></div>
         <div style="text-align:center;"><span style="color:var(--text2);font-size:.75rem;">Paid</span><br><strong style="color:var(--green)">${fmt(totalPaid)}</strong></div>
         <div style="text-align:right;"><span style="color:var(--text2);font-size:.75rem;">Remaining</span><br><strong style="color:var(--red)">${fmt(remaining)}</strong></div>
       </div>
@@ -709,13 +812,26 @@ async function renderDebtDetail(id) {
       <button class="btn btn-danger btn-sm" onclick="deleteDebt(${id})">Delete</button>
     </div>`;
 
-  // Debt details
+  // Debt details with interest breakdown
+  const principal = debt.principal || debt.amount;
+  const interestAmt = debt.interest_amount || 0;
+  const duration = debt.start_date && debt.due_date ? calcDuration(debt.start_date, debt.due_date) : '—';
+
+  let rateLabel = `${debt.interest_rate || 0}%`;
+  if (debt.loan_type === 'Daily') rateLabel += ' / day';
+  else if (debt.loan_type === 'Weekly') rateLabel += ' / week';
+  else if (debt.loan_type === 'Monthly') rateLabel += ' / month';
+  else if (debt.loan_type === 'One-time') rateLabel += ' flat';
+
   html += `<div class="detail-section"><h3>Details</h3>
-    <div class="detail-row"><span class="label">Amount</span><span>${fmt(debt.amount)}</span></div>
-    <div class="detail-row"><span class="label">Interest</span><span>${debt.interest_rate || 0}%</span></div>
-    <div class="detail-row"><span class="label">Loan Type</span><span>${debt.loan_type || 'Monthly'}</span></div>
-    <div class="detail-row"><span class="label">Start</span><span>${fmtDate(debt.start_date)}</span></div>
-    <div class="detail-row"><span class="label">Due</span><span>${fmtDate(debt.due_date)}</span></div>
+    <div class="detail-row"><span class="label">Principal</span><span>${fmt(principal)}</span></div>
+    <div class="detail-row"><span class="label">Interest Rate</span><span>${rateLabel}</span></div>
+    <div class="detail-row"><span class="label">Interest Amount</span><span style="color:var(--orange)">${fmt(interestAmt)}</span></div>
+    <div class="detail-row"><span class="label">Total (Principal + Interest)</span><span style="font-weight:700;color:var(--green)">${fmt(debt.amount)}</span></div>
+    <div class="detail-row"><span class="label">Loan Type</span><span>${debt.loan_type || 'Daily'}</span></div>
+    <div class="detail-row"><span class="label">Start Date</span><span>${fmtDate(debt.start_date)}</span></div>
+    <div class="detail-row"><span class="label">Due Date</span><span>${fmtDate(debt.due_date)}</span></div>
+    <div class="detail-row"><span class="label">Duration</span><span>${duration}</span></div>
   </div>`;
 
   // Instalments
